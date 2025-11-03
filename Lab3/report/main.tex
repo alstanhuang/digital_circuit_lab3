@@ -6,7 +6,7 @@
 % Set page size and margins
 \usepackage[a4paper,top=3cm,bottom=3cm,left=2.5cm,right=2.5cm,marginparwidth=1.75cm]{geometry}
 
-% Other useful packages
+% Other packages
 \usepackage{amsmath}
 \usepackage{graphicx}
 \usepackage[colorlinks=true, allcolors=blue]{hyperref}
@@ -16,6 +16,7 @@
 \usepackage{verbatim}
 \usepackage{tikz}
 \usetikzlibrary{shapes,arrows,positioning}
+\usepackage{float}
 
 % Code style settings
 \lstset{
@@ -40,10 +41,8 @@
 
 
 
-
-
 \title{Team06 Lab3 Report}
-\author{B12901193, B12901166, B12901030 Yu-Siang Huang}
+\author{B12901193 Chin-Yen Pan \\ B12901166 Yin-Liang Chen \\ B12901030 Yu-Siang Huang}
 
 \begin{document}
 \maketitle
@@ -61,10 +60,24 @@
 \section{Hardware Scheduling}
 \input{Hardware_Scheduling.tex}
 
-\section{Fitter Summary}
-\section{Timing Analyzer}
 
-\bibliographystyle{alpha}
-\bibliography{sample}
+\section{Fitter Summary}
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.7\textwidth]{report/Fitter_Summary.PNG} 
+  \caption{Fitter Summary}
+  \label{fig:my_image}
+\end{figure}
+
+\section{Timing Analyzer}
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.7\textwidth]{report/Timing_Analyzer.PNG} 
+  \caption{Timing Analyzer}
+\end{figure}
+
+\section{Problems and Solutions}
+\input{Problems_and_Solutions.tex}
+
 
 \end{document}

@@ -1,4 +1,4 @@
-The system uses a hierarchical finite state machine (FSM) structure to coordinate hardware operations across multiple modules. The main FSM in \texttt{Top.sv} controls overall system operation, while sub-modules implement their own FSMs for specific tasks.
+The system uses a hierarchical finite state machine (FSM) structure to coordinate hardware operations across multiple modules. The main FSM in \texttt{Top.sv} controls overall system operation, while submodules implement their own FSMs for specific tasks.
 
 \subsection{Finite State Machine (FSM) Overview}
 
@@ -27,49 +27,7 @@ S_PLAY (4)       → Active playback state
 S_PLAY_PAUSE (5) → Playback paused
 \end{verbatim}
 
-\subsubsection{State Transition Diagram}
-
-The state machine follows the transition flow shown in Figure~\ref{fig:main_fsm}.
-
-\begin{figure}[h!]
-\centering
-\begin{tikzpicture}[
-    node distance=2.5cm, 
-    auto, 
-    thick,
-    state/.style={rectangle, rounded corners, draw=black, fill=gray!20, minimum width=2cm, minimum height=1cm, text centered},
-    initial/.style={fill=green!20}
-]
-    % Define states
-    \node[state, initial] (IDLE) {IDLE};
-    \node[state, right of=IDLE, xshift=1cm] (I2C) {I2C};
-    \node[state, below of=I2C] (CLEAN) {CLEAN};
-    \node[state, left of=CLEAN, xshift=-1cm] (RECD) {RECD};
-    \node[state, below of=RECD] (RECDPAUSE) {RECD\_PAUSE};
-    \node[state, right of=RECD, xshift=1cm] (PLAY) {PLAY};
-    \node[state, below of=PLAY] (PLAYPAUSE) {PLAY\_PAUSE};
-    
-    % Define transitions
-    \path[->] (IDLE) edge[bend left=20] node[above] {Boot seq} (I2C)
-              (I2C) edge node[right] {Init done} (CLEAN)
-              (CLEAN) edge node[left] {Clean done} (IDLE)
-              (IDLE) edge[bend right=30] node[left] {KEY1} (RECD)
-              (IDLE) edge[bend left=30] node[right] {KEY0} (PLAY)
-              (RECD) edge node[left] {KEY1} (RECDPAUSE)
-              (RECDPAUSE) edge node[right] {KEY1} (RECD)
-              (RECD) edge node[above, sloped] {KEY2} (IDLE)
-              (RECDPAUSE) edge node[below, sloped] {KEY2} (IDLE)
-              (PLAY) edge node[right] {KEY0} (PLAYPAUSE)
-              (PLAYPAUSE) edge node[left] {KEY0} (PLAY)
-              (PLAY) edge[bend right=30] node[above, sloped] {KEY2 or end} (IDLE)
-              (PLAYPAUSE) edge node[below, sloped] {KEY2} (IDLE);
-\end{tikzpicture}
-\caption{Main System State Machine}
-\label{fig:main_fsm}
-\end{figure}
-
 \subsubsection{State Transition Logic}
-
 The FSM is implemented using a two-process design (combinational + sequential):
 
 \begin{lstlisting}[language=Verilog]
@@ -112,6 +70,54 @@ always_comb begin
 end
 \end{lstlisting}
 
+\subsubsection{State Transition Diagram}
+
+The state machine follows the transition flow shown in Figure~\ref{fig:main_fsm}.
+
+\begin{figure}[h!]
+\centering
+\begin{tikzpicture}[
+  node distance=3.5cm and 3.2cm,
+  >=stealth,
+  thick,
+  state/.style={rectangle, rounded corners, draw=black, fill=gray!20,
+                minimum width=2.6cm, minimum height=1cm, text centered},
+  initial/.style={fill=green!20}
+]
+
+% --- States ---
+\node[state, initial]                     (IDLE)      {IDLE};
+\node[state, right=5cm of IDLE]           (I2C)       {I2C};
+\node[state, below=3.2cm of I2C]          (PLAY)      {PLAY};
+\node[state, below=3cm of PLAY]         (PLAYPAUSE) {PLAY\_PAUSE};
+\node[state, left=5cm of PLAY]            (RECD)      {RECD};
+\node[state, below=3cm of RECD]         (RECDPAUSE) {RECD\_PAUSE};
+
+% --- Transitions ---
+\path[->]
+  (IDLE) edge[bend left=15] node[above] {Boot seq} (I2C)
+  (I2C) edge node[right, xshift=3pt] {Init done} (PLAY)
+  (PLAY) edge node[above, sloped] {KEY2 or end} (IDLE)
+  (PLAYPAUSE) edge node[above, sloped] {KEY2} (IDLE)
+
+  (IDLE) edge[bend right=20] node[left] {KEY1} (RECD)
+  (RECD) edge[bend right=20] node[right] {KEY2} (IDLE)
+  (RECDPAUSE) edge[bend right=35] node[right, yshift=-4pt] {KEY2} (IDLE)
+
+  (RECD) edge node[right] {} (RECDPAUSE)
+  (RECDPAUSE) edge node[left] {KEY1} (RECD)
+
+  (IDLE) edge[bend left=25] node[right] {KEY0} (PLAY)
+  (PLAY) edge node[right] {} (PLAYPAUSE)
+  (PLAYPAUSE) edge node[right] {KEY0} (PLAY);
+
+\end{tikzpicture}
+
+
+\caption{Main System State Machine}
+\label{fig:main_fsm}
+\end{figure}
+
 \subsubsection{Initialization Sequence}
 
 Upon power-on or reset, the system automatically performs initialization:
@@ -126,7 +132,7 @@ Upon power-on or reset, the system automatically performs initialization:
     \item System is ready for user operations
 \end{enumerate}
 
-\subsection{Sub-module FSMs}
+\subsection{Submodule FSMs}
 
 \subsubsection{AudDSP FSM}
 
@@ -139,7 +145,8 @@ States:
 - S_PAUSE:  Playback paused, maintaining current state
 \end{verbatim}
 
-\textbf{Key Operations in S\_PLAY State}:
+\noindent
+\textbf{Key Operations in the S\_PLAY State}:
 \begin{itemize}
     \item Address generation based on speed mode (fast/slow/normal)
     \item Sample interpolation for slow playback
@@ -153,12 +160,13 @@ The AudRecorder module implements a three-state FSM for recording:
 
 \begin{verbatim}
 States:
-- IDLE:     Waiting for start signal
+- IDLE:      Waiting for start signal
 - RECORDING: Active recording, collecting I2S data
-- PAUSED:   Recording paused
+- PAUSED:    Recording paused
 \end{verbatim}
 
-\textbf{Key Operations in RECORDING State}:
+\noindent
+\textbf{Key Operations in the RECORDING State}:
 \begin{itemize}
     \item Samples serial audio data on negative edge of \texttt{i\_bclk}
     \item Detects rising edge of \texttt{i\_lrc} to start new sample
@@ -234,9 +242,7 @@ The system shares SRAM between multiple operations using multiplexers:
 
 \begin{lstlisting}[language=Verilog]
 // Address multiplexer based on current state
-assign o_SRAM_ADDR = (state_r == S_RECD || state_r == S_RECD_PAUSE) ? addr_record :
-                     (state_r == S_CLEAN)                           ? addr_clean  :
-                                                                      addr_play;
+assign o_SRAM_ADDR = (state_r == S_RECD || state_r == S_RECD_PAUSE) ? addr_record : (state_r == S_CLEAN) ? addr_clean : addr_play;
 
 // Data multiplexer
 assign io_SRAM_DQ  = (state_r == S_RECD) ? data_record :
