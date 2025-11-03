@@ -1,0 +1,302 @@
+The system uses a hierarchical finite state machine (FSM) structure to coordinate hardware operations across multiple modules. The main FSM in \texttt{Top.sv} controls overall system operation, while sub-modules implement their own FSMs for specific tasks.
+
+\subsection{Finite State Machine (FSM) Overview}
+
+The hardware scheduling is managed through multiple synchronized FSMs:
+
+\begin{itemize}
+    \item \textbf{Main System FSM} (Top.sv): Controls system-level operations
+    \item \textbf{AudDSP FSM}: Manages playback processing
+    \item \textbf{AudRecorder FSM}: Controls recording operations
+    \item \textbf{I2cInitializer FSM}: Handles I2C protocol communication
+\end{itemize}
+
+\subsection{Main System FSM}
+
+The main FSM in \texttt{Top.sv} has seven states to manage system initialization, recording, and playback operations.
+
+\subsubsection{State Definitions}
+
+\begin{verbatim}
+S_IDLE (0)       → Idle state, waiting for user input
+S_I2C (1)        → I2C initialization of WM8731 codec
+S_CLEAN (6)      → Clearing SRAM memory
+S_RECD (2)       → Active recording state
+S_RECD_PAUSE (3) → Recording paused
+S_PLAY (4)       → Active playback state
+S_PLAY_PAUSE (5) → Playback paused
+\end{verbatim}
+
+\subsubsection{State Transition Diagram}
+
+The state machine follows the transition flow shown in Figure~\ref{fig:main_fsm}.
+
+\begin{figure}[h!]
+\centering
+\begin{tikzpicture}[
+    node distance=2.5cm, 
+    auto, 
+    thick,
+    state/.style={rectangle, rounded corners, draw=black, fill=gray!20, minimum width=2cm, minimum height=1cm, text centered},
+    initial/.style={fill=green!20}
+]
+    % Define states
+    \node[state, initial] (IDLE) {IDLE};
+    \node[state, right of=IDLE, xshift=1cm] (I2C) {I2C};
+    \node[state, below of=I2C] (CLEAN) {CLEAN};
+    \node[state, left of=CLEAN, xshift=-1cm] (RECD) {RECD};
+    \node[state, below of=RECD] (RECDPAUSE) {RECD\_PAUSE};
+    \node[state, right of=RECD, xshift=1cm] (PLAY) {PLAY};
+    \node[state, below of=PLAY] (PLAYPAUSE) {PLAY\_PAUSE};
+    
+    % Define transitions
+    \path[->] (IDLE) edge[bend left=20] node[above] {Boot seq} (I2C)
+              (I2C) edge node[right] {Init done} (CLEAN)
+              (CLEAN) edge node[left] {Clean done} (IDLE)
+              (IDLE) edge[bend right=30] node[left] {KEY1} (RECD)
+              (IDLE) edge[bend left=30] node[right] {KEY0} (PLAY)
+              (RECD) edge node[left] {KEY1} (RECDPAUSE)
+              (RECDPAUSE) edge node[right] {KEY1} (RECD)
+              (RECD) edge node[above, sloped] {KEY2} (IDLE)
+              (RECDPAUSE) edge node[below, sloped] {KEY2} (IDLE)
+              (PLAY) edge node[right] {KEY0} (PLAYPAUSE)
+              (PLAYPAUSE) edge node[left] {KEY0} (PLAY)
+              (PLAY) edge[bend right=30] node[above, sloped] {KEY2 or end} (IDLE)
+              (PLAYPAUSE) edge node[below, sloped] {KEY2} (IDLE);
+\end{tikzpicture}
+\caption{Main System State Machine}
+\label{fig:main_fsm}
+\end{figure}
+
+\subsubsection{State Transition Logic}
+
+The FSM is implemented using a two-process design (combinational + sequential):
+
+\begin{lstlisting}[language=Verilog]
+// Sequential logic - State register
+always_ff @(posedge i_clk or negedge i_rst_n) begin
+    if (!i_rst_n) begin
+        state_r <= S_IDLE;
+        boot_done_r <= 1'b0;
+        record_max_addr_r <= 20'd0;
+    end else begin
+        if (state_r == S_RECD && addr_record > record_max_addr_r)
+            record_max_addr_r <= addr_record;
+        state_r <= state_next;
+        if (state_r == S_CLEAN && state_next == S_IDLE)
+            boot_done_r <= 1'b1;
+    end
+end
+
+// Combinational logic - Next state and output
+always_comb begin
+    state_next = state_r;
+    // Default control signals...
+    case (state_r)
+        S_IDLE: begin
+            if (!boot_done_r) begin
+                state_next = S_I2C;
+            end else if (i_key_0) begin
+                state_next = S_PLAY;
+            end else if (i_key_1) begin
+                state_next = S_RECD;
+            end
+        end
+        S_I2C: begin
+            if (i2c_finished) begin
+                state_next = S_CLEAN;
+            end
+        end
+        // ... other state transitions
+    endcase
+end
+\end{lstlisting}
+
+\subsubsection{Initialization Sequence}
+
+Upon power-on or reset, the system automatically performs initialization:
+
+\begin{enumerate}
+    \item System starts in \texttt{S\_IDLE}
+    \item If \texttt{boot\_done\_r} is false, automatically transitions to \texttt{S\_I2C}
+    \item I2C initialization configures WM8731 codec registers
+    \item Upon completion, transitions to \texttt{S\_CLEAN}
+    \item SRAM is cleared by writing zeros to all addresses
+    \item Returns to \texttt{S\_IDLE} and sets \texttt{boot\_done\_r} flag
+    \item System is ready for user operations
+\end{enumerate}
+
+\subsection{Sub-module FSMs}
+
+\subsubsection{AudDSP FSM}
+
+The AudDSP module implements a three-state FSM for playback control:
+
+\begin{verbatim}
+States:
+- S_IDLE:   Idle, waiting for start signal
+- S_PLAY:   Active playback with speed/effect processing
+- S_PAUSE:  Playback paused, maintaining current state
+\end{verbatim}
+
+\textbf{Key Operations in S\_PLAY State}:
+\begin{itemize}
+    \item Address generation based on speed mode (fast/slow/normal)
+    \item Sample interpolation for slow playback
+    \item Robot voice effect processing (when enabled)
+    \item Synchronized to I2S clock domain via \texttt{daclrck\_pos\_edge}
+\end{itemize}
+
+\subsubsection{AudRecorder FSM}
+
+The AudRecorder module implements a three-state FSM for recording:
+
+\begin{verbatim}
+States:
+- IDLE:     Waiting for start signal
+- RECORDING: Active recording, collecting I2S data
+- PAUSED:   Recording paused
+\end{verbatim}
+
+\textbf{Key Operations in RECORDING State}:
+\begin{itemize}
+    \item Samples serial audio data on negative edge of \texttt{i\_bclk}
+    \item Detects rising edge of \texttt{i\_lrc} to start new sample
+    \item Collects 16 bits into shift register
+    \item Writes to SRAM and increments address on sample completion
+    \item Handles overflow condition when address reaches maximum
+\end{itemize}
+
+\subsubsection{I2cInitializer FSM}
+
+The I2cInitializer implements a complex FSM for I2C protocol:
+
+\begin{itemize}
+    \item Handles START condition
+    \item Bit-by-bit transmission of 3 bytes per register
+    \item ACK/NACK detection after each byte
+    \item STOP condition
+    \item Repeats for 6 configuration registers
+\end{itemize}
+
+\subsection{Clock Domain Management}
+
+The system operates across multiple clock domains, requiring careful synchronization:
+
+\subsubsection{Clock Domains}
+
+\begin{itemize}
+    \item \textbf{12 MHz (i\_clk)}: 
+        \begin{itemize}
+            \item Main system clock
+            \item Top FSM state machine
+            \item LCD controller
+            \item SRAM clearing module
+        \end{itemize}
+    
+    \item \textbf{100 kHz (i\_clk\_100k)}: 
+        \begin{itemize}
+            \item I2C communication clock
+            \item I2cInitializer module
+        \end{itemize}
+    
+    \item \textbf{I2S Bit Clock (i\_AUD\_BCLK)}: 
+        \begin{itemize}
+            \item Audio data clock (typically 12.288 MHz)
+            \item AudRecorder (negative edge sampling)
+            \item AudDSP (main processing clock)
+            \item AudPlayer (positive edge output)
+        \end{itemize}
+    
+    \item \textbf{32 kHz (I2S LRCK)}: 
+        \begin{itemize}
+            \item Sample rate clock
+            \item Synchronizes sample boundaries
+            \item Triggers address updates
+        \end{itemize}
+\end{itemize}
+
+\subsubsection{Synchronization Strategy}
+
+\begin{itemize}
+    \item Each module operates within its designated clock domain
+    \item Cross-domain signals use edge detection for synchronization
+    \item Control signals from 12 MHz domain are synchronized at module boundaries
+    \item I2S modules sample/output on appropriate clock edges per WM8731 specification
+    \item Address and data signals are registered to prevent metastability
+\end{itemize}
+
+\subsection{Hardware Scheduling Mechanism}
+
+\subsubsection{Resource Sharing}
+
+The system shares SRAM between multiple operations using multiplexers:
+
+\begin{lstlisting}[language=Verilog]
+// Address multiplexer based on current state
+assign o_SRAM_ADDR = (state_r == S_RECD || state_r == S_RECD_PAUSE) ? addr_record :
+                     (state_r == S_CLEAN)                           ? addr_clean  :
+                                                                      addr_play;
+
+// Data multiplexer
+assign io_SRAM_DQ  = (state_r == S_RECD) ? data_record :
+                     (state_r == S_CLEAN) ? data_clean : 16'hzzzz;
+assign data_play   = io_SRAM_DQ;
+
+// Write enable control
+assign o_SRAM_WE_N = (state_r == S_RECD || state_r == S_CLEAN) ? 1'b0 : 1'b1;
+\end{lstlisting}
+
+\subsubsection{Operation Coordination}
+
+The main FSM coordinates module operations:
+
+\begin{itemize}
+    \item \textbf{Recording Mode}: 
+        \begin{itemize}
+            \item Enables \texttt{rec\_start} signal to AudRecorder
+            \item Routes \texttt{addr\_record} to SRAM address bus
+            \item Routes \texttt{data\_record} to SRAM data bus
+            \item Sets SRAM write enable
+        \end{itemize}
+    
+    \item \textbf{Playback Mode}: 
+        \begin{itemize}
+            \item Enables \texttt{dsp\_start} signal to AudDSP
+            \item AudDSP generates \texttt{addr\_play} based on speed mode
+            \item SRAM data is read and fed to AudDSP
+            \item Processed data flows to AudPlayer for output
+        \end{itemize}
+    
+    \item \textbf{Clearing Mode}: 
+        \begin{itemize}
+            \item Activates Clean\_sram module
+            \item Sequentially writes zeros to all SRAM addresses
+            \item Completes initialization sequence
+        \end{itemize}
+\end{itemize}
+
+\subsection{Real-time Performance}
+
+The system maintains real-time audio processing through:
+
+\begin{itemize}
+    \item \textbf{Synchronized Operations}: Audio modules synchronized to I2S clock
+    \item \textbf{Deterministic Timing}: FSM ensures predictable state transitions
+    \item \textbf{Buffering}: SRAM provides buffer between recording and playback
+    \item \textbf{Pipeline Processing}: DSP operations complete within sample period
+    \item \textbf{Priority Management}: Recording and playback are mutually exclusive
+\end{itemize}
+
+\subsection{Summary}
+
+The hardware scheduling mechanism successfully coordinates multiple concurrent operations through a hierarchical FSM structure. The design ensures:
+
+\begin{itemize}
+    \item Proper initialization sequence on startup
+    \item Exclusive access to shared resources (SRAM)
+    \item Real-time audio processing within timing constraints
+    \item Flexible operation modes (record, play, pause)
+    \item Robust state management with clear transitions
+\end{itemize}
+

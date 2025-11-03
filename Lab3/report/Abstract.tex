@@ -1,0 +1,7 @@
+This project implements a digital audio recording and playback system on FPGA (DE2-115 board) using WM8731 codec and I2S protocol. Audio data is stored in SRAM (1M × 16-bit, ~30 seconds at 32 kHz).
+
+The system features variable-speed playback (1/8x to 8x) with constant and linear interpolation methods, and includes a robot voice effect using envelope following and Hadamard transform. A finite state machine manages system operation across seven states: idle, initialization, recording, playback, and their pause states.
+
+The design utilizes multiple clock domains (12 MHz system, 100 kHz I2C, I2S bit clock) with proper synchronization. Experimental results demonstrate successful real-time audio processing with user-controllable speed and effects.
+
+\textbf{Keywords:} FPGA, Digital Audio Processing, I2S Protocol, Variable Speed Playback

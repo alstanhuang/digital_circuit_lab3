@@ -1,0 +1,70 @@
+\documentclass[12pt]{article}
+
+% Language setting
+\usepackage[english]{babel} 
+
+% Set page size and margins
+\usepackage[a4paper,top=3cm,bottom=3cm,left=2.5cm,right=2.5cm,marginparwidth=1.75cm]{geometry}
+
+% Other useful packages
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage[colorlinks=true, allcolors=blue]{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{verbatim}
+\usepackage{tikz}
+\usetikzlibrary{shapes,arrows,positioning}
+
+% Code style settings
+\lstset{
+    language=Verilog,
+    basicstyle=\ttfamily\small,
+    keywordstyle=\color{blue}\bfseries,
+    commentstyle=\color{green!60!black},
+    stringstyle=\color{red},
+    numbers=left,
+    numberstyle=\tiny\color{gray},
+    stepnumber=1,
+    numbersep=5pt,
+    backgroundcolor=\color{gray!10},
+    frame=single,
+    breaklines=true,
+    breakatwhitespace=true,
+    tabsize=2,
+    showspaces=false,
+    showstringspaces=false
+}
+
+
+
+
+
+
+\title{Team06 Lab3 Report}
+\author{B12901193, B12901166, B12901030 Yu-Siang Huang}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\input{Abstract.tex}
+\end{abstract}
+
+\section{File Structure}
+\input{File_Structure.tex}
+
+\section{System Architecture}
+\input{System_Architecture.tex}
+
+\section{Hardware Scheduling}
+\input{Hardware_Scheduling.tex}
+
+\section{Fitter Summary}
+\section{Timing Analyzer}
+
+\bibliographystyle{alpha}
+\bibliography{sample}
+
+\end{document}

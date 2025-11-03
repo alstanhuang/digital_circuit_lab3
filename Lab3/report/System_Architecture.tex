@@ -1,0 +1,423 @@
+This is a digital audio recording and playback system implemented on FPGA (DE2-115 development board). The system uses WM8731 audio codec for analog-to-digital conversion and SRAM as audio data buffer. The system supports recording, playback, variable speed playback (fast/slow), and various audio effects processing.
+
+\subsection{System Architecture Hierarchy}
+
+\begin{verbatim}
++-------------------------------------------------------------+
+|                      DE2_115.sv                             |
+|            (Hardware Interface Layer / Top Module)          |
+|  - Button inputs (KEY[3:0])                                 |
+|  - Switch inputs (SW[17:0])                                 |
+|  - LED outputs                                              |
+|  - LCD outputs                                              |
+|  - SRAM interface                                           |
+|  - I2C interface (WM8731)                                   |
+|  - I2S audio interface                                      |
+|  - PLL clock generator (12MHz, 100kHz)                      |
++----------------------+--------------------------------------+
+                       |
+                       v
++-------------------------------------------------------------+
+|                      Top.sv                                 |
+|              (System Control Layer / State Machine)         |
+|  - Main state machine (IDLE, I2C, RECD, RECD_PAUSE,         |
+|    PLAY, PLAY_PAUSE)                                        |
+|  - System initialization flow control                       |
+|  - Record/Play mode switching                               |
+|  - SRAM multiplexer control                                 |
++-----+-----------+-----------+-----------+-----------+-------+
+      |           |           |           |           |
+      v           v           v           v           v
++----------+ +----------+ +----------+ +----------+ +---------+
+|  I2C     | | AudRec-  | |  AudDSP  | | AudPlayer| |   LCD   |
+| Initial- | | order    | |          | |          | |         |
+| izer     | |          | |          | |          | |         |
++----------+ +----------+ +----------+ +----------+ +---------+
+      |           |           |           |           |
+      v           v           v           v           v
++----------+ +----------+ +----------+ +----------+ +---------+
+|  WM8731  | |   SRAM   | |   SRAM   | |  WM8731  | |   LCD   |
+|  Codec   | |  (Write) | |  (Read)  | |   DAC    | | Display |
++----------+ +----------+ +----------+ +----------+ +---------+
+\end{verbatim}
+
+\subsection{Module Descriptions}
+
+\subsubsection{DE2\_115.sv (Hardware Interface Layer)}
+
+\textbf{Function}: Connects FPGA with DE2-115 development board hardware resources
+
+\textbf{Main Responsibilities}:
+\begin{itemize}
+    \item Button debouncing (\texttt{Debounce})
+    \item PLL clock generation (\texttt{Altpll})
+    \begin{itemize}
+        \item \texttt{CLK\_12M}: 12 MHz (WM8731 master clock)
+        \item \texttt{CLK\_100K}: 100 kHz (I2C clock)
+    \end{itemize}
+    \item Hardware signal routing to \texttt{Top.sv}
+\end{itemize}
+
+\textbf{Key Interfaces}:
+\begin{lstlisting}[language=]
+- KEY[3:0]: Button inputs (after debouncing)
+- SW[17:0]: Switch inputs
+- SRAM_ADDR[19:0], SRAM_DQ[15:0]: SRAM interface
+- I2C_SCLK, I2C_SDAT: I2C interface
+- AUD_*: I2S audio interface
+\end{lstlisting}
+
+\subsubsection{Top.sv (System Control Layer)}
+
+\textbf{Function}: Main control center of the system, manages overall operation flow
+
+\textbf{State Machine}:
+\begin{verbatim}
+S_IDLE (0)       → Idle state
+S_I2C (1)        → I2C initialization
+S_CLEAN (6)      → SRAM clearing
+S_RECD (2)       → Recording
+S_RECD_PAUSE (3) → Recording paused
+S_PLAY (4)       → Playing
+S_PLAY_PAUSE (5) → Playback paused
+\end{verbatim}
+
+\textbf{Initialization Flow}:
+\begin{enumerate}
+    \item Enter \texttt{S\_IDLE} after power-on/reset
+    \item Automatically enter \texttt{S\_I2C} to initialize WM8731
+    \item Enter \texttt{S\_CLEAN} to clear SRAM after completion
+    \item Return to \texttt{S\_IDLE} after completion, waiting for user operation
+\end{enumerate}
+
+\textbf{SRAM Multiplexer}:
+\begin{itemize}
+    \item Record mode: \texttt{addr\_record} → SRAM\_ADDR, \texttt{data\_record} → SRAM\_DQ
+    \item Play mode: \texttt{addr\_play} → SRAM\_ADDR, SRAM\_DQ → \texttt{data\_play}
+    \item Clean mode: \texttt{addr\_clean} → SRAM\_ADDR, \texttt{data\_clean} → SRAM\_DQ
+\end{itemize}
+
+\textbf{Control Signal Routing}:
+\begin{itemize}
+    \item Record control: \texttt{rec\_start}, \texttt{rec\_pause}, \texttt{rec\_stop} → \texttt{AudRecorder}
+    \item Playback control: \texttt{dsp\_start}, \texttt{dsp\_pause}, \texttt{dsp\_stop}, \texttt{dsp\_speed}, \texttt{dsp\_fast}, \texttt{dsp\_slow\_0/1} → \texttt{AudDSP}
+    \item LCD display: \texttt{lcd\_mode}, \texttt{lcd\_addr\_current}, \texttt{lcd\_addr\_max} → \texttt{LCD}
+\end{itemize}
+
+\subsubsection{I2cInitializer.sv (I2C Initialization Module)}
+
+\textbf{Function}: Initialize WM8731 audio codec through I2C protocol
+
+\textbf{Communication Protocol}:
+\begin{itemize}
+    \item I2C address: \texttt{0x1A} (CSB=0)
+    \item Clock: 100 kHz
+    \item Open-drain output
+\end{itemize}
+
+\textbf{Initialization Register Sequence}:
+\begin{verbatim}
+R4 (0x04): Analog Audio Path Control      → 0x15
+R5 (0x05): Digital Audio Path Control     → 0x00
+R6 (0x06): Power Down Control             → 0x00 (All enabled)
+R7 (0x07): Digital Audio Interface Format → 0x42 (I2S, 16-bit)
+R8 (0x08): Sampling Control               → 0x19 (USB mode, 32kHz)
+R9 (0x09): Active Control                 → 0x01 (Interface active)
+\end{verbatim}
+
+\textbf{State Machine}:
+\begin{itemize}
+    \item Complete implementation of I2C START, bit transmission, ACK/NACK detection, STOP
+    \item Each register transmits 3 bytes: \{SLAVE\_ADDR+R/W\}, \{REG\_ADDR+DATA[8]\}, \{DATA[7:0]\}
+    \item NACK detection: Output error indication through \texttt{o\_ledr}
+\end{itemize}
+
+\subsubsection{AudRecorder.sv (Recording Module)}
+
+\textbf{Function}: Receive I2S audio data from WM8731 ADC and write to SRAM
+
+\textbf{Interface}:
+\begin{itemize}
+    \item \texttt{i\_bclk}: Bit clock
+    \item \texttt{i\_lrc}: Left/Right channel clock (ADCLRCK), only processes right channel (LRC=1)
+    \item \texttt{i\_data}: Serial audio data (ADCDAT)
+    \item \texttt{o\_address}: SRAM write address
+    \item \texttt{o\_data}: SRAM write data (16-bit)
+    \item \texttt{o\_overflow}: Overflow indicator
+\end{itemize}
+
+\textbf{Operation Mechanism}:
+\begin{itemize}
+    \item State machine: \texttt{IDLE} → \texttt{RECORDING} → \texttt{PAUSED}
+    \item Sample data on negative edge of \texttt{i\_bclk} (compliant with WM8731 specification)
+    \item Detect rising edge of \texttt{i\_lrc}, start collecting 16-bit data
+    \item Address automatically increments after each sample completion
+    \item When address reaches \texttt{0xFFFFF}, set \texttt{o\_overflow} and stop recording
+\end{itemize}
+
+\textbf{Data Flow}:
+\begin{verbatim}
+ADCDAT (Serial) → Shift Register → o_data[15:0] (Parallel) → SRAM
+\end{verbatim}
+
+\subsubsection{AudDSP.sv (Digital Signal Processing Module)}
+
+\textbf{Function}: Handle address control, speed adjustment, interpolation, and audio effects processing during playback
+
+\textbf{Core Functions}:
+
+\paragraph{Playback Control State Machine}
+\begin{itemize}
+    \item \texttt{S\_IDLE}: Idle
+    \item \texttt{S\_PLAY}: Playing
+    \item \texttt{S\_PAUSE}: Paused
+\end{itemize}
+
+\paragraph{Fast Playback Mode (\texttt{i\_fast=1})}
+\begin{itemize}
+    \item Skip samples for acceleration based on \texttt{i\_speed[2:0]}:
+    \begin{itemize}
+        \item \texttt{000} = 1x (normal)
+        \item \texttt{001} = 2x
+        \item \texttt{010} = 3x
+        \item \ldots
+        \item \texttt{111} = 8x
+    \end{itemize}
+    \item Supports backward playback (\texttt{i\_play\_backward=1})
+\end{itemize}
+
+\paragraph{Slow Playback Mode (\texttt{i\_slow\_0} or \texttt{i\_slow\_1})}
+\begin{itemize}
+    \item \textbf{Constant interpolation} (\texttt{i\_slow\_0=1}): Maintain previous sample value
+    \item \textbf{Linear interpolation} (\texttt{i\_slow\_1=1}): Linear interpolation between previous and current samples
+    \item Speed selection: \texttt{i\_speed} determines interpolation period (1/2x to 1/8x)
+\end{itemize}
+
+\paragraph{Robot Voice Effect (\texttt{i\_voice\_robot=1})}
+\begin{itemize}
+    \item \textbf{Envelope Follower}:
+    \begin{itemize}
+        \item Uses leaky integrator to track envelope of audio absolute value
+        \item Attack time: Fast rise (\texttt{ROBOT\_ENV\_ATTACK\_SHIFT=6})
+        \item Decay time: Slow fall (\texttt{ROBOT\_ENV\_DECAY\_SHIFT=8})
+    \end{itemize}
+    \item \textbf{LFO Square Wave Generator}:
+    \begin{itemize}
+        \item Frequency approximately 200 Hz (\texttt{ROBOT\_TOGGLE\_TH=120})
+        \item Generates carrier signal
+    \end{itemize}
+    \item \textbf{Hadamard Transform}:
+    \begin{itemize}
+        \item 4-point Hadamard transform matrix processing
+        \item Coefficient adjustment: Preserve c0, attenuate c1, slightly enhance c3
+        \item Modifies timbre characteristics
+    \end{itemize}
+\end{itemize}
+
+\textbf{Data Flow}:
+\begin{verbatim}
+SRAM → i_sram_data → Speed/Interpolation Processing → Robot Effect Processing → o_dac_data
+\end{verbatim}
+
+\subsubsection{AudPlayer.sv (Playback Module)}
+
+\textbf{Function}: Send DSP-processed audio data to WM8731 DAC through I2S protocol
+
+\textbf{Interface}:
+\begin{itemize}
+    \item \texttt{i\_bclk}: Bit clock
+    \item \texttt{i\_daclrck}: Left/Right channel clock (DACLRCK)
+    \item \texttt{i\_dac\_data}: 16-bit audio data from DSP
+    \item \texttt{o\_aud\_dacdat}: Serial data output to DAC
+\end{itemize}
+
+\textbf{Operation Mechanism}:
+\begin{itemize}
+    \item Detect rising edge of \texttt{i\_daclrck}, load new 16-bit data into shift register
+    \item On positive edge of \texttt{i\_bclk}, serially output data bits starting from MSB
+    \item Output data only during right channel (\texttt{i\_daclrck=1})
+\end{itemize}
+
+\textbf{Data Flow}:
+\begin{verbatim}
+i_dac_data[15:0] → Shift Register → o_aud_dacdat (MSB first)
+\end{verbatim}
+
+\subsubsection{LCD.sv (LCD Display Module)}
+
+\textbf{Function}: Display recording/playback status and time information on LCD display
+
+\textbf{Display Content}:
+\begin{itemize}
+    \item \textbf{Line 1}: Mode text
+    \begin{itemize}
+        \item Record mode: \texttt{"Record time:"}
+        \item Play mode: \texttt{"Play time:"}
+    \end{itemize}
+    \item \textbf{Line 2}: Time information
+    \begin{itemize}
+        \item Format: \texttt{"123/456"} (current seconds / maximum seconds)
+        \item Based on address conversion: \texttt{seconds = address / 32000} (32 kHz sample rate)
+    \end{itemize}
+\end{itemize}
+
+\textbf{State Machine}:
+\begin{itemize}
+    \item Initialization sequence: Power wait → Function set → Display on → Clear → Write data
+    \item Dynamic update: Monitor \texttt{i\_mode} and address changes, update only changed parts
+\end{itemize}
+
+\textbf{Update Strategy}:
+\begin{itemize}
+    \item Mode switch: Clear and rewrite entire display
+    \item Time change: Update only line 2 (throttled update to avoid flickering)
+\end{itemize}
+
+\subsubsection{Clean\_sram.sv (SRAM Clearing Module)}
+
+\textbf{Function}: Write 0 to all SRAM addresses to clear old data
+
+\textbf{Operation Mechanism}:
+\begin{itemize}
+    \item State machine: \texttt{S\_IDLE} → \texttt{S\_WRITE}
+    \item Start from address \texttt{0x00000}, write \texttt{0x0000} address by address
+    \item After reaching \texttt{0xFFFFF}, output \texttt{o\_done} pulse and return to \texttt{S\_IDLE}
+\end{itemize}
+
+\textbf{Usage Timing}:
+\begin{itemize}
+    \item Automatically executed during system initialization
+    \item Ensures playback does not read uncleared data
+\end{itemize}
+
+\subsection{Data Flow Diagrams}
+
+\subsubsection{Recording Flow}
+\begin{verbatim}
+WM8731 ADC → I2S (ADCDAT)
+    ↓
+AudRecorder (Serial→Parallel Conversion)
+    ↓
+SRAM (Write, Address Increment)
+    ↓
+Record Maximum Address (record_max_addr_r)
+\end{verbatim}
+
+\subsubsection{Playback Flow}
+\begin{verbatim}
+SRAM (Read, Address Controlled by AudDSP)
+    ↓
+AudDSP (Speed Control, Interpolation, Audio Effects Processing)
+    ↓
+AudPlayer (Parallel→Serial Conversion)
+    ↓
+WM8731 DAC → I2S (DACDAT)
+    ↓
+Analog Audio Output
+\end{verbatim}
+
+\subsection{Clock Domain Description}
+
+\subsubsection{Main Clock}
+\begin{itemize}
+    \item \textbf{i\_clk (12 MHz)}: 
+    \begin{itemize}
+        \item Top state machine
+        \item LCD control
+        \item Clean\_sram
+    \end{itemize}
+\end{itemize}
+
+\subsubsection{I2C Clock}
+\begin{itemize}
+    \item \textbf{i\_clk\_100k (100 kHz)}: 
+    \begin{itemize}
+        \item I2cInitializer
+    \end{itemize}
+\end{itemize}
+
+\subsubsection{I2S Clock}
+\begin{itemize}
+    \item \textbf{i\_AUD\_BCLK (Bit Clock)}: 
+    \begin{itemize}
+        \item AudRecorder (negative edge sampling)
+        \item AudDSP (main clock)
+        \item AudPlayer (positive edge output)
+    \end{itemize}
+    \item \textbf{i\_AUD\_DACLRCK / i\_AUD\_ADCLRCK (Left/Right Channel Clock)}:
+    \begin{itemize}
+        \item Approximately 32 kHz (sample rate)
+        \item Used for synchronizing sample boundaries
+    \end{itemize}
+\end{itemize}
+
+\subsection{Memory Mapping}
+
+\subsubsection{SRAM Configuration}
+\begin{itemize}
+    \item \textbf{Capacity}: 1M × 16-bit (20-bit address space)
+    \item \textbf{Address Range}: \texttt{0x00000} - \texttt{0xFFFFF}
+    \item \textbf{Data Width}: 16-bit (signed)
+    \item \textbf{Maximum Recording Time}: Approximately 30 seconds (32 kHz sample rate)
+\end{itemize}
+
+\subsubsection{Address Calculation}
+\begin{verbatim}
+Number of Samples = Address Value
+Time (seconds) = Address Value / 32000
+Maximum Recording Time = 1048576 / 32000 = 32.8 seconds
+\end{verbatim}
+
+\subsection{Control Signal Mapping}
+
+\subsubsection{Button Control (Top.sv Level)}
+\begin{itemize}
+    \item \textbf{KEY0}: Play start/pause toggle
+    \item \textbf{KEY1}: Record start/pause toggle
+    \item \textbf{KEY2}: Stop (return to IDLE)
+    \item \textbf{KEY3}: System reset
+\end{itemize}
+
+\subsubsection{Switch Control (SW[17:0])}
+\begin{itemize}
+    \item \textbf{SW[2:0]}: Speed selection (0-7)
+    \item \textbf{SW[11]}: Backward playback
+    \item \textbf{SW[12]}: Robot voice effect
+    \item \textbf{SW[15]}: Slow linear interpolation
+    \item \textbf{SW[16]}: Slow constant interpolation
+    \item \textbf{SW[17]}: Fast playback mode
+\end{itemize}
+
+\subsection{System Limitations and Considerations}
+
+\subsubsection{Performance Limitations}
+\begin{itemize}
+    \item Recording length limited by SRAM capacity (\textasciitilde 30 seconds)
+    \item Fast playback above 4x may produce noticeable distortion
+    \item Slow playback requires sufficient original data
+\end{itemize}
+
+\subsubsection{Timing Considerations}
+\begin{itemize}
+    \item I2S protocol must strictly follow timing requirements
+    \item SRAM multiplexer switching needs to consider race conditions
+    \item LCD updates need throttling to avoid excessive refresh
+\end{itemize}
+
+\subsubsection{Audio Quality Considerations}
+\begin{itemize}
+    \item Linear interpolation provides better audio quality than constant interpolation
+    \item Robot voice effect will alter original timbre
+    \item Fast playback will raise pitch
+\end{itemize}
+
+\subsection{Summary}
+
+This system adopts a modular design with clear responsibilities for each module:
+\begin{itemize}
+    \item \textbf{Hardware Interface Layer} (DE2\_115): Handles physical signals
+    \item \textbf{Control Layer} (Top): Coordinates module operations
+    \item \textbf{Function Layer} (various function modules): Implements specific functions
+\end{itemize}
+
+The system supports complete recording and playback workflows, and provides rich playback modes and audio effects processing capabilities, suitable for audio processing learning and experimentation.

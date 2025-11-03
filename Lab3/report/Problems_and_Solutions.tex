@@ -1,0 +1,49 @@
+\section{Problems Encountered, Solutions, Experiences, and Recommendations}
+
+This chapter summarizes the major problems encountered during system integration, peripheral driver implementation, and the verification process, as well as the solutions adopted and the team’s experiences and suggestions for future improvement. The content is suitable for inclusion in reports or oral presentations.
+
+\subsection{System Integration and Timing}
+\begin{itemize}
+\item Problem: Each module makes different clock assumptions (for example, \texttt{src/LCD.sv} assumes \texttt{CLK_HZ=12_000_000}); if not unified, it leads to timing errors with peripherals or initialization failures.
+\item Solution: Parameterize all clock-related constants (\texttt{CLK_HZ}, \texttt{SAMPLES_PER_SEC}, etc.) and override them with real board clock values when instantiating in \texttt{Top.sv}; add synchronizers or use FIFO/handshake mechanisms for cross-clock signals; supplement .sdc timing constraints to notify the Timing Analyzer.
+\end{itemize}
+
+\subsection{LCD Initialization and Driver Stability}
+\begin{itemize}
+\item Problem: The LCD either displays garbled text or nothing; typical issues are mismatched timing parameters or insufficient EN/RS pulse lengths.
+\item Solution: Confirm the actual clock rate and update \texttt{CLK_HZ}, or switch from hardcoded microsecond delays to clock tick counting; when necessary, read the Busy Flag (requires making \texttt{o_LCD_RW} switchable to input) or keep a conservative delay parameter for easier adjustment; verify timings using an oscilloscope.
+\end{itemize}
+
+\subsection{Display Format and Update Efficiency}
+\begin{itemize}
+\item Problem: Frequently overwriting entire display lines causes unnecessary delays and poor responsiveness.
+\item Solution: Only update display data when values change (already implemented by adding a refresh timer and last-value comparison); further optimization can be achieved through per-character updates to reduce write cycles; if the format changes to mm:ss, convert seconds to minutes/seconds before output.
+\end{itemize}
+
+\subsection{Sample Rate and Time Conversion}
+\begin{itemize}
+\item Problem: If the actual sampling rate differs from the programmed rate (e.g., 32k vs 48k), the displayed seconds will be incorrect; values over 999 seconds are truncated.
+\item Solution: Set \texttt{SAMPLES_PER_SEC} as a top-level parameter and record it in the README; use the mm:ss format for more user-friendly long-duration displays; for values exceeding display limits, show the maximum allowed value or a special string.
+\end{itemize}
+
+\subsection{Testing and Verification}
+\begin{itemize}
+\item Problem: Lack of automated testbench increases the debugging effort on hardware.
+\item Solution: Develop a SystemVerilog testbench to simulate initialization, mode switching, and address changes; build unit test sets for pure functions such as \texttt{num_to_decimal_ascii3} (timing boundary and overflow cases).
+\end{itemize}
+
+\subsection{Development Experiences and Recommendations}
+\begin{enumerate}
+\item Always prioritize peripheral timing: All delays and counters should be based on the actual clock rate, and centralized management of parameters at the top level reduces integration errors.
+\item Modular and parameterized design dramatically improves maintainability (parameters like \texttt{CLK_HZ}, \texttt{SAMPLES_PER_SEC}).
+\item Reports should include a “problem → analysis → correction → re-verification” process, with supporting screenshots from the Fitter and Timing Analyzer to demonstrate robustness.
+\end{enumerate}
+
+\subsection{Priority Items for Future Improvements (Recommended Order)}
+\begin{enumerate}
+\item Highest Priority: Clearly instantiate and set \texttt{CLK_HZ} and \texttt{SAMPLES_PER_SEC} in \texttt{Top.sv}; build a testbench for \texttt{LCD.sv}; add necessary timing screenshots to reports.
+\item Medium Term: Implement per-character updates, switch to mm:ss display, or make Busy Flag read optional via parameter.
+\item Long Term: Package as a reusable LCD driver IP, or add software-controlled register maps (such as AXI-lite) and introduce CI testing.
+\end{enumerate}
+
+% End of file
